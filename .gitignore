@@ -1,0 +1,20 @@
+# 构建产物（发布走 GitHub Releases）
+/ai-trace
+/ai-trace-bin
+/dist/
+/release/
+
+# 桌面端构建产物
+/desktop/Oscillo.app
+/desktop/ai-trace
+/desktop/desktop
+/desktop/build/bin/
+
+# 内部交接文档（不发布）
+/HANDOFF-*.md
+
+# 本地工具数据
+/.zcode/
+
+# 系统
+.DS_Store

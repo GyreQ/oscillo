@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#1a1c23"/>
+    <stop offset="1" stop-color="#0a0b0e"/>
+  </linearGradient>
+  <radialGradient id="glow" cx="0.5" cy="0.52" r="0.6">
+    <stop offset="0" stop-color="#6f9dff" stop-opacity="0.22"/>
+    <stop offset="1" stop-color="#6f9dff" stop-opacity="0"/>
+  </radialGradient>
+  <filter id="blur" x="-40%" y="-40%" width="180%" height="180%">
+    <feGaussianBlur stdDeviation="26"/>
+  </filter>
+</defs>
+<!-- 示波器屏幕 -->
+<rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#bg)"/>
+<rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#glow)"/>
+<!-- 刻度网格（graticule） -->
+<g stroke="#6f9dff" stroke-opacity="0.13" stroke-width="3">
+  <line x1="341" y1="120" x2="341" y2="904"/>
+  <line x1="683" y1="120" x2="683" y2="904"/>
+  <line x1="120" y1="341" x2="904" y2="341"/>
+  <line x1="120" y1="683" x2="904" y2="683"/>
+</g>
+<g stroke="#6f9dff" stroke-opacity="0.22" stroke-width="3">
+  <line x1="120" y1="512" x2="904" y2="512"/>
+  <line x1="512" y1="120" x2="512" y2="904"/>
+</g>
+<!-- 荧光波形：光晕层 + 芯层 -->
+<path d="M172 512h150l60-196 105 392 75-196h260"
+  fill="none" stroke="#6f9dff" stroke-width="104" stroke-linecap="round" stroke-linejoin="round"
+  opacity="0.45" filter="url(#blur)"/>
+<path d="M172 512h150l60-196 105 392 75-196h260"
+  fill="none" stroke="#8fb7ff" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+<!-- live 信号点 -->
+<circle cx="822" cy="512" r="74" fill="#3fdc9b" opacity="0.35" filter="url(#blur)"/>
+<circle cx="822" cy="512" r="34" fill="#3fdc9b"/>
+</svg>

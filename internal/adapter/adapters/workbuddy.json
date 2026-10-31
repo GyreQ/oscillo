@@ -1,0 +1,13 @@
+{
+  "id": "workbuddy",
+  "name": "WorkBuddy (CodeBuddy)",
+  "kind": "desktop",
+  "protocol": "openai-chat",
+  "bins": [],
+  "apps": ["WorkBuddy.app", "WorkBuddy AI.app"],
+  "configFiles": ["~/.workbuddy/models.json", "~/.workbuddy-ai/models.json"],
+  "env": {},
+  "note": "桌面应用。在 ~/.workbuddy/models.json 加一条自定义模型，url 指向 http://127.0.0.1:8787/v1/chat/completions，apiKey 填上游认可的 key（会被原样透传）。文件改动即时生效，不用重启应用；模型在 WorkBuddy 窗口的模型选择器里选（显示为 custom-local:<id>）",
+  "userAgents": ["CLI/ WorkBuddy/"],
+  "logs": []
+}

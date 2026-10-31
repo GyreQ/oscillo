@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="88" height="88" viewBox="0 0 88 88">
+  <!-- 菜单栏 template 字形：纯黑 + alpha，波形撑满画布（旧版只占角落导致菜单栏看不见） -->
+  <path d="M10 44h16l8-27 14 54 9-27h21" fill="none" stroke="#000"
+    stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

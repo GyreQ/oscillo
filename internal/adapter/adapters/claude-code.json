@@ -1,0 +1,13 @@
+{
+  "id": "claude-code",
+  "name": "Claude Code",
+  "kind": "cli",
+  "protocol": "anthropic",
+  "bins": ["claude"],
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787"
+  },
+  "note": "网关会把请求透传到 api.anthropic.com，API key 用你自己的",
+  "userAgents": ["claude-cli"],
+  "logs": ["~/.claude/projects/**/*.jsonl"]
+}

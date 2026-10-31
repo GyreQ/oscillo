@@ -1,0 +1,11 @@
+{
+  "id": "generic-openai",
+  "name": "任意 OpenAI 兼容客户端",
+  "kind": "cli",
+  "protocol": "openai-chat",
+  "bins": [],
+  "env": {
+    "OPENAI_BASE_URL": "http://127.0.0.1:8787/v1"
+  },
+  "note": "任何读 OPENAI_BASE_URL 的程序；ai-trace run <命令> 也会注入全部已知 base_url 变量"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "generic-anthropic",
+  "name": "任意 Anthropic 兼容客户端",
+  "kind": "cli",
+  "protocol": "anthropic",
+  "bins": [],
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787",
+    "ANTHROPIC_API_KEY": "继承你原来的 key"
+  },
+  "note": "任何读 ANTHROPIC_BASE_URL 的程序：zcode / workbuddy 等若支持自定义 Anthropic 端点也走这里"
+}

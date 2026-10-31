@@ -1,0 +1,12 @@
+{
+  "id": "gemini-cli",
+  "name": "Gemini CLI",
+  "kind": "cli",
+  "protocol": "gemini",
+  "bins": ["gemini"],
+  "env": {
+    "GOOGLE_GEMINI_BASE_URL": "http://127.0.0.1:8787"
+  },
+  "note": "Phase 1 仅原文录制（不解码 Gemini 协议），Phase 2 补解码",
+  "userAgents": ["gemini-cli"]
+}

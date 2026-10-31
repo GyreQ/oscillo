@@ -1,0 +1,13 @@
+{
+  "id": "codex",
+  "name": "Codex CLI",
+  "kind": "cli",
+  "protocol": "openai-responses",
+  "bins": ["codex"],
+  "env": {
+    "OPENAI_BASE_URL": "http://127.0.0.1:8787/v1"
+  },
+  "note": "Codex 走 /v1/responses 协议；网关透传到 api.openai.com",
+  "userAgents": ["codex"],
+  "logs": ["~/.codex/sessions/**/*.jsonl"]
+}
