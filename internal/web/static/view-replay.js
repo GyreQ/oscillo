@@ -139,7 +139,7 @@ AI.render = (() => {
 AI.views.replay = (() => {
   const F = AI.fmt, R = AI.render;
 
-  async function render(container, id) {
+  async function render(container, id, params) {
     let data;
     try {
       data = await AI.api.record(id);
@@ -147,6 +147,11 @@ AI.views.replay = (() => {
       container.innerHTML = `<div class="view-inner"><div class="empty-state"><b>记录不存在</b>${F.esc(e.message)}</div></div>`;
       return;
     }
+    // ?turn=<id>：从用户请求轮次点进来的，返回链接指回该轮
+    const fromTurn = params && params.get("turn");
+    const backlink = fromTurn
+      ? `<a class="backlink" href="#/turn/${encodeURIComponent(fromTurn)}">← 用户请求</a>`
+      : `<a class="backlink" href="#/requests">← 请求</a>`;
     const rec = data.record, body = data.body || {};
     const req = parseJSON(body.requestBody) || {};
     const messages = req.messages || [];
@@ -176,9 +181,31 @@ AI.views.replay = (() => {
     const answerHTML = R.resultBlock(result) ||
       `<div class="empty-state">本次响应没有可展示的回答（无解码结果），看「原文」里的响应原文</div>`;
 
-    // 对话：折叠行
+    // 对话：分「本次调用新增」与「历史上下文」。协议上每条请求都携带此前
+    // 完整对话，平铺会被几百条历史淹没；从最后一条 user 消息切到结尾的是
+    // 这次调用真正新增的内容（用户输入或工具结果 + 收尾系统注入），其余
+    // 折叠到下面。
+    let newFrom = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (String(messages[i].role || "").toLowerCase() === "user") { newFrom = i; break; }
+    }
+    const newMsgs = messages.slice(newFrom);
+    const histMsgs = messages.slice(0, newFrom);
+    const newRows = newMsgs.map((m, j) =>
+      turnBlock(m, newFrom + j, toolNames, newFrom + j === messages.length - 1)).join("");
+    const histRows = histMsgs.map((m, j) => turnBlock(m, j, toolNames, false)).join("");
     const turnsHTML = messages.length
-      ? chatToolbar() + messages.map((m, i) => turnBlock(m, i, toolNames, i === messages.length - 1)).join("")
+      ? chatToolbar()
+        + (histMsgs.length ? `<div class="pv-sec chat-sec">本次调用新增 · ${newMsgs.length} 条</div>` : "")
+        + newRows
+        + (histMsgs.length ? `
+      <details class="turn hist-block">
+        <summary>
+          <span class="t-chip">历史</span>
+          <span class="t-prev">此前对话上下文 · ${histMsgs.length} 条（协议原样携带，非本次新增）</span>
+        </summary>
+        <div class="t-body">${histRows}</div>
+      </details>` : "")
       : `<div class="empty-state">请求体里没有 messages（${F.esc(rec.path || "")}），完整内容见「原文」</div>`;
 
     // 工具：按名字分组
@@ -208,7 +235,9 @@ AI.views.replay = (() => {
     // ---- 链路条（即 Tab 栏）：提示词 → 对话 → 工具 → 回答 ｜ 原文 ----
     const chain = [
       { k: "prompt", label: "提示词", n: sysText || toolsDef.length ? F.tok(sysText.length) + " 字" : "", hide: !promptHTML },
-      { k: "chat", label: "对话", n: messages.length ? messages.length + " 条" : "" },
+      { k: "chat", label: "对话", n: messages.length
+        ? (histMsgs.length ? `新增 ${newMsgs.length} · 历史 ${histMsgs.length}` : messages.length + " 条")
+        : "" },
       { k: "tools", label: "工具", n: toolEntries.length ? toolEntries.length + " 次" : "", hide: !toolEntries.length },
       { k: "answer", label: "回答", n: resText ? F.tok(resText.length) + " 字" : "", goal: true },
       { k: "raw", label: "原文" },
@@ -251,7 +280,7 @@ AI.views.replay = (() => {
     container.innerHTML = `
       <div class="view-inner">
         <div class="view-h">
-          <a class="backlink" href="#/requests">← 请求</a>
+          ${backlink}
           <h1>${F.esc(F.agentName(rec.agent))} · ${F.esc(rec.model || "未知模型")}</h1>
           ${rec.error ? F.statusBadge(rec.status, rec.error) : F.statusBadge(rec.status)}
         </div>
@@ -293,7 +322,7 @@ AI.views.replay = (() => {
   // ---- 对话：折叠行交互（展开全部 / 收起全部） ----
   function chatToolbar() {
     return `<div class="turn-bar">
-      <span class="dim" style="font-size:11.5px">按消息折叠 · 默认展开最后一条</span>
+      <span class="dim" style="font-size:11.5px">本次新增在上 · 历史折叠在下 · 默认展开最后一条</span>
       <span style="margin-left:auto;display:inline-flex;gap:6px">
         <button type="button" class="btn sm" data-turns="open">展开全部</button>
         <button type="button" class="btn sm" data-turns="close">收起全部</button>
@@ -305,11 +334,15 @@ AI.views.replay = (() => {
     const html = R.messageBlock(m, toolNames);
     if (!html) return "";
     const role = m.role || (Array.isArray(m.content_block) ? "user" : "?");
-    const kind = role === "tool" || (m.tool_calls && m.tool_calls.length)
-      || R.contentBlocks(m).some(b => b.type === "tool_use" || b.type === "tool_result") ? "tool" : role;
+    const blocks = R.contentBlocks(m);
+    const hasResult = role === "tool" || blocks.some(b => b.type === "tool_result");
+    const hasCall = (m.tool_calls && m.tool_calls.length) || blocks.some(b => b.type === "tool_use");
+    const kind = hasResult || hasCall ? "tool" : role;
+    const chip = hasResult ? "工具结果" : hasCall ? "工具调用"
+      : role === "user" ? "用户" : role === "assistant" ? "助手" : role;
     return `<details class="turn t-${kind}" ${open ? "open" : ""}>
       <summary>
-        <span class="t-chip">${role === "tool" ? "工具结果" : kind === "tool" ? "工具调用" : role === "user" ? "用户" : role === "assistant" ? "助手" : role}</span>
+        <span class="t-chip">${chip}</span>
         <span class="t-prev">${F.esc(turnPreview(m, toolNames))}</span>
         <span class="t-idx">${i + 1}</span>
       </summary>

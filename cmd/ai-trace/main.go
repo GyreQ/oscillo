@@ -374,8 +374,11 @@ func doctorCmd() int {
 	return 0
 }
 
-// runAdvice 一个 agent 的接入建议文案。
+// runAdvice 一个 agent 的接入建议文案（适配器自带 advice 优先）。
 func runAdvice(a *adapter.Adapter) string {
+	if a.Advice != "" {
+		return a.Advice
+	}
 	switch a.Kind {
 	case "desktop":
 		return "桌面端：优先在设置里找自定义 API 地址；没有则 capture on 走 MITM"

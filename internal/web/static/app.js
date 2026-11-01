@@ -54,7 +54,11 @@ AI.views = AI.views || {};
         document.title = "概览 · Oscillo";
       } else if (hash.startsWith("#/replay/")) {
         current = AI.views.replay;
-        await current.render(view, decodeURIComponent(hash.slice("#/replay/".length)));
+        // 可带 ?turn=<id> 来源参数：详情页返回链接指回用户请求轮次
+        const raw = decodeURIComponent(hash.slice("#/replay/".length));
+        const q = raw.indexOf("?");
+        await current.render(view, q < 0 ? raw : raw.slice(0, q),
+          new URLSearchParams(q < 0 ? "" : raw.slice(q + 1)));
         document.title = "回放 · Oscillo";
       } else if (hash.startsWith("#/requests")) {
         current = AI.views.requests; await current.render(view);

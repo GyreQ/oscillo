@@ -40,6 +40,7 @@ var uaAgents = []struct{ prefix, id string }{
 	{"qwen-code", "qwen-code"},
 	{"quark", "quark"},   // 夸克客户端（UA 形如 Quark/x.y.z）
 	{"doubao", "doubao"}, // 豆包 CLI
+	{"pi/", "pi"},        // pi coding agent（pi.dev）——UA 前缀按 pi/x.y.z 预估，实测认不出再调
 	{"curl", "curl"},     // 手动调试请求
 }
 

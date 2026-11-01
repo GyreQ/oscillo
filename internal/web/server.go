@@ -330,7 +330,15 @@ func Handler(st *store.Store, col *collector.Collector, pt *analytics.PriceTable
 		w.Write(data)
 	})
 
-	return mux
+	// API 响应禁止缓存：本地 dashboard 常驻进程重启后数据会变，
+	// WKWebView 等会对无 Cache-Control 的 GET 做启发式缓存，导致
+	// 界面显示旧数据（技能/轮次列表凭空多出已删除条目）。
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // filterRecords 按可选条件过滤（空串不过滤）。status 支持 "err" 特殊值（错误记录）。

@@ -1,15 +1,20 @@
 // 会话视图。两个数据源：
 //   流量会话 —— 从录制账本按 session 分组合成（WorkBuddy / 豆包等全部被录制 agent）
 //   日志会话 —— 本地日志（Claude Code / Codex）解析出的历史会话
+// 顶部按应用分 Tab（图标 + 数量，选中态记在 localStorage），未识别流量归「其他」。
 // #/sessions 列表 · #/tsession/<id> 流量会话详情 · #/session/<agent>/<id> 日志会话回放
 AI.views = AI.views || {};
 AI.views.sessions = (() => {
   const F = AI.fmt;
+  const TAB_KEY = "ai-trace-sess-tab"; // 记住上次选的应用 Tab
+  const ALL = "__all__", OTHER = "__other__";
+  // 应用 Tab 优先序：常用的排前面，其余有会话的应用按显示名跟在后面
+  const PRIORITY = ["workbuddy", "zcode", "claude-code", "pi"];
 
   async function render(container) {
     container.innerHTML = `<div class="view-inner">
       <div class="view-h">
-        <h1>会话</h1><span class="sub">流量按 session 聚合 · 本地日志解析的历史会话</span>
+        <h1>会话</h1><span class="sub">流量按 session 聚合 · 本地日志解析的历史会话 · 按应用分 Tab</span>
       </div>
       <div class="list"><div class="empty-state">加载中…</div></div></div>`;
 
@@ -25,53 +30,111 @@ AI.views.sessions = (() => {
       return;
     }
 
-    let html = "";
-    if (ts.length) {
-      html += `<div class="list">
-        <div class="row" style="min-height:0;padding:9px 14px"><b style="font-size:12.5px">流量会话</b>
-          <span class="sub">从录制的请求聚合 · ${ts.length} 个</span></div>` +
-        ts.map(s => `
-        <div class="row click" data-tsession="${F.esc(s.id)}">
-          <div class="who">
-            <div class="name">${s.title ? F.esc(s.title) : "（无标题会话）"}</div>
-            <div class="sub">${s.agents.map(F.agentName).map(F.esc).join(" · ")}
-              ${s.models.length ? " · " + F.esc(s.models.join(" / ")) : ""}
-              · ${s.turns} 轮 · ${s.requests} 次调用 · ${F.datetime(s.firstSeen)} → ${F.datetime(s.lastSeen)}</div>
-          </div>
-          <div class="sess-num">
-            <b>${F.tok(s.usage.input)} 入 / ${F.tok(s.usage.output)} 出</b>
-          </div>
-        </div>`).join("") + `</div>`;
+    // ---- 按应用分桶。流量会话可能带多个 agent（内容 hash 兜底时会话 id 偶尔跨应用
+    // 共享），归入它涉及的每个应用；unknown / 空归「其他」。日志会话按自身 agent 归桶。
+    const buckets = new Map();
+    const bucketOf = (a) => {
+      let b = buckets.get(a);
+      if (!b) { b = { ts: [], ls: [] }; buckets.set(a, b); }
+      return b;
+    };
+    for (const s of ts) {
+      const ags = (s.agents || []).filter(a => a && a !== "unknown");
+      if (!ags.length) bucketOf(OTHER).ts.push(s);
+      else ags.forEach(a => bucketOf(a).ts.push(s));
     }
-    if (ls.length) {
-      html += `<div class="list ${ts.length ? "mt" : ""}">
-        <div class="row" style="min-height:0;padding:9px 14px"><b style="font-size:12.5px">日志会话</b>
-          <span class="sub">Claude Code / Codex 本地日志 · ${ls.length} 个</span></div>` +
-        ls.map(s => `
-        <div class="row click" data-agent="${F.esc(s.agent)}" data-id="${F.esc(s.id)}">
-          <div class="who">
-            <div class="name">${s.title ? F.esc(s.title) : "（无标题会话）"}</div>
-            <div class="sub">${F.esc(F.agentName(s.agent))}${s.project ? " · " + F.esc(s.project.split("/").pop()) : ""}
-              · ${s.turnCount} 轮 · ${F.ago(s.modTime)}</div>
-          </div>
-          <div class="sess-num">
-            <b>${F.tok(s.totalUsage && s.totalUsage.input)} 入 / ${F.tok(s.totalUsage && s.totalUsage.output)} 出</b>
-          </div>
-        </div>`).join("") + `</div>`;
-    }
-    const listHost = container.querySelector(".list");
-    listHost.outerHTML = html;
+    ls.forEach(s => bucketOf(s.agent || OTHER).ls.push(s));
 
-    container.querySelectorAll(".row[data-tsession]").forEach(item => {
-      item.onclick = () => {
-        location.hash = `#/tsession/${encodeURIComponent(item.dataset.tsession)}`;
+    const apps = [...PRIORITY.filter(a => buckets.has(a)),
+      ...[...buckets.keys()].filter(a => a !== OTHER && !PRIORITY.includes(a))
+        .sort((x, y) => F.agentName(x).localeCompare(F.agentName(y)))];
+    if (buckets.has(OTHER)) apps.push(OTHER);
+
+    let cur = localStorage.getItem(TAB_KEY) || ALL;
+    if (cur !== ALL && !buckets.has(cur)) cur = ALL; // 上次的应用这回没有会话了 → 回全部
+
+    const tabIcon = (a) => a === ALL
+      ? '<span class="agent-ic" style="--ic:var(--muted)" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></span>'
+      : F.agentIcon(a);
+
+    const tsRow = (s) => `
+      <div class="row click" data-tsession="${F.esc(s.id)}">
+        ${F.agentIcon((s.agents || [])[0], true)}
+        <div class="who">
+          <div class="name">${s.title ? F.esc(s.title) : "（无标题会话）"}</div>
+          <div class="sub">${(s.agents || []).map(F.agentName).map(F.esc).join(" · ")}
+            ${s.models.length ? " · " + F.esc(s.models.join(" / ")) : ""}
+            · ${s.turns} 轮 · ${s.requests} 次调用 · ${F.datetime(s.firstSeen)} → ${F.datetime(s.lastSeen)}</div>
+        </div>
+        <div class="sess-num">
+          <b>${F.tok(s.usage.input)} 入 / ${F.tok(s.usage.output)} 出</b>
+        </div>
+      </div>`;
+
+    const lsRow = (s) => `
+      <div class="row click" data-agent="${F.esc(s.agent)}" data-id="${F.esc(s.id)}">
+        ${F.agentIcon(s.agent, true)}
+        <div class="who">
+          <div class="name">${s.title ? F.esc(s.title) : "（无标题会话）"}</div>
+          <div class="sub">${F.esc(F.agentName(s.agent))}${s.project ? " · " + F.esc(s.project.split("/").pop()) : ""}
+            · ${s.turnCount} 轮 · ${F.ago(s.modTime)}</div>
+        </div>
+        <div class="sess-num">
+          <b>${F.tok(s.totalUsage && s.totalUsage.input)} 入 / ${F.tok(s.totalUsage && s.totalUsage.output)} 出</b>
+        </div>
+      </div>`;
+
+    function draw() {
+      const sel = cur === ALL ? { ts, ls } : (buckets.get(cur) || { ts: [], ls: [] });
+
+      // 流量 / 日志两个分区，空分区不渲染；第一个非空分区不缩进
+      let first = true;
+      const section = (title, note, items, row) => {
+        if (!items.length) return "";
+        const h = `<div class="list${first ? "" : " mt"}">
+          <div class="row head"><b>${title}</b><span class="sub">${note} · ${items.length} 个</span></div>` +
+          items.map(row).join("") + `</div>`;
+        first = false;
+        return h;
       };
-    });
-    container.querySelectorAll(".row[data-id]").forEach(item => {
-      item.onclick = () => {
-        location.hash = `#/session/${encodeURIComponent(item.dataset.agent)}/${encodeURIComponent(item.dataset.id)}`;
-      };
-    });
+
+      container.innerHTML = `
+        <div class="view-inner">
+          <div class="view-h">
+            <h1>会话</h1><span class="sub">流量按 session 聚合 · 本地日志解析的历史会话 · 按应用分 Tab</span>
+          </div>
+          <div class="rtabs">
+            <button type="button" data-tab="${ALL}" class="${cur === ALL ? "on" : ""}" title="全部应用">
+              ${tabIcon(ALL)}全部<span class="n">${ts.length + ls.length}</span></button>
+            ${apps.map(a => `
+            <button type="button" data-tab="${F.esc(a)}" class="${cur === a ? "on" : ""}" title="${F.esc(F.agentName(a))}">
+              ${tabIcon(a)}${F.esc(a === OTHER ? "其他" : F.agentName(a))}<span class="n">${buckets.get(a).ts.length + buckets.get(a).ls.length}</span></button>`).join("")}
+          </div>
+          ${section("流量会话", "从录制的请求聚合", sel.ts, tsRow)}
+          ${section("日志会话", "Claude Code / Codex 本地日志", sel.ls, lsRow)}
+          ${!sel.ts.length && !sel.ls.length ? '<div class="empty-state">这个应用还没有会话</div>' : ""}
+        </div>`;
+
+      container.querySelectorAll(".rtabs button").forEach(b => {
+        b.onclick = () => {
+          cur = b.dataset.tab;
+          localStorage.setItem(TAB_KEY, cur);
+          draw();
+        };
+      });
+      container.querySelectorAll(".row[data-tsession]").forEach(item => {
+        item.onclick = () => {
+          location.hash = `#/tsession/${encodeURIComponent(item.dataset.tsession)}`;
+        };
+      });
+      container.querySelectorAll(".row[data-agent]").forEach(item => {
+        item.onclick = () => {
+          location.hash = `#/session/${encodeURIComponent(item.dataset.agent)}/${encodeURIComponent(item.dataset.id)}`;
+        };
+      });
+    }
+
+    draw();
   }
 
   return { render };
@@ -98,7 +161,7 @@ AI.views.tsession = (() => {
       <div class="view-inner">
         <div class="view-h">
           <a class="backlink" href="#/sessions">← 会话</a>
-          <h1>${s.title ? F.esc(s.title) : "流量会话"}</h1>
+          <h1>${(s.agents || [])[0] ? F.agentIcon(s.agents[0], true) : ""}${s.title ? F.esc(s.title) : "流量会话"}</h1>
           <span class="sub">${(s.agents || []).map(F.agentName).map(F.esc).join(" · ")} · ${s.turns} 轮 · ${calls} 次调用</span>
         </div>
         <div class="stats mb">
@@ -154,7 +217,7 @@ AI.views.session = (() => {
       <div class="view-inner">
         <div class="view-h">
           <a class="backlink" href="#/sessions">← 会话</a>
-          <h1>${s.title ? F.esc(s.title) : "会话回放"}</h1>
+          <h1>${F.agentIcon(s.agent, true)}${s.title ? F.esc(s.title) : "会话回放"}</h1>
           <span class="sub">${F.esc(F.agentName(s.agent))}${s.project ? " · " + F.esc(s.project) : ""} · ${s.turnCount} 轮</span>
         </div>
         <div class="stats mb">

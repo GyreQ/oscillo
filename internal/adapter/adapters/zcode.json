@@ -1,0 +1,17 @@
+{
+  "id": "zcode",
+  "name": "ZCode",
+  "kind": "cli",
+  "protocol": "anthropic",
+  "apps": ["ZCode.app"],
+  "configFiles": ["~/.zcode"],
+  "launch": ["{{app}}/Contents/MacOS/ZCode", "{{app}}/Contents/Resources/glm/zcode.cjs"],
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787",
+    "ELECTRON_RUN_AS_NODE": "1"
+  },
+  "note": "桌面端走 MITM 抓取（见 doctor 建议）；CLI 直启仅 app-server/-p 可用",
+  "advice": "桌面端（推荐）：ai-trace capture on 后执行 launchctl setenv HTTPS_PROXY http://127.0.0.1:8788 与 launchctl setenv NODE_EXTRA_CA_CERTS ~/.ai-trace/ca/cert.pem，完全退出并重启 ZCode 即录制（还原：两项 unsetenv + capture off）。CLI 直启：ai-trace run zcode（独立 TUI 缺 @zcode/tui，-p 需 ZCode 默认模型，仅 app-server 模式可用）",
+  "userAgents": ["ZCode/"],
+  "logs": ["~/.zcode/cli/rollout/*.jsonl", "~/.zcode/v2/rollout/*.jsonl"]
+}

@@ -3,12 +3,14 @@
 // 视角翻转：账本里一行 = 一次模型调用（模型侧）；用户侧的一轮 = 一次用户
 // 输入触发的 N 次调用。切轮规则看模型请求的消息列表末尾——是工具结果
 // （OpenAI 的 role:"tool"、Anthropic 的 tool_result 块、Responses API 的
-// function_call_output）就归入当前轮继续，是纯用户文本就开启新轮；
-// 解析不了的请求体（豆包 content_block 等私有形态）安全兜底为自成一轮。
+// function_call_output）或系统注入（ZCode mid-conversation-system 的提醒/
+// 环境快照/通知）就归入当前轮继续，是真实用户文本就开启新轮；解析不了的
+// 请求体（豆包 content_block 等私有形态）安全兜底为自成一轮。
 package web
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -54,13 +56,45 @@ func classifyRecord(st *store.Store, r store.Record) turnClass {
 	c := turnClass{starts: true}
 	if b, err := st.Body(r.ID); err == nil && len(b.RequestBody) > 0 {
 		c.starts, c.text = classifyBody(b.RequestBody)
+		// ZCode 压缩请求（上下文满时自动生成摘要，X-Zcode-Query-Source:
+		// compact）：系统触发而非用户输入，归入当前轮延续
+		if c.starts && headerValue(b.RequestHeaders, "X-Zcode-Query-Source") == "compact" {
+			c.starts = false
+		}
 	}
 	bodyClassCache.Store(r.ID, c)
 	return c
 }
 
+// headerValue 大小写不敏感地取一个请求头的值。
+func headerValue(h map[string]string, key string) string {
+	if v, ok := h[key]; ok {
+		return v
+	}
+	lk := strings.ToLower(key)
+	for k, v := range h {
+		if strings.ToLower(k) == lk {
+			return v
+		}
+	}
+	return ""
+}
+
 // classifyBody 判断一次模型请求是否开启新一轮用户请求。
-// 返回（是否新轮，新轮的用户输入文本）。
+// 返回（是否新轮，该轮的用户输入文本——收尾消息不是真实用户发言时向前回溯）。
+//
+// 规则（从消息列表末尾向前看）：
+//   - 收尾的 role:"system" 注入先跳过。ZCode 用 mid-conversation-system
+//     beta 把 TodoWrite 提醒、环境快照、后台通知、工具回显追加在消息列表
+//     末尾，这些系统消息永远不代表用户发言；
+//   - 跳过后收尾是工具结果（OpenAI 的 role:"tool"/"function"、Anthropic
+//     的 tool_result 块、Responses API 的 function_call_output）→ 延续；
+//   - 收尾 user 消息里有真实文本 → 新轮（ZCode 会把上下文块排在真实输入
+//     前面，取最后一个非注入文本块）；
+//   - 收尾 user 消息没有真实文本（纯提醒/环境注入，或纯图片）→ 延续，
+//     不再为注入开空轮；
+//   - 跳过系统注入后收尾是 assistant → 系统通知触发的续跑 → 延续；
+//     没跳过系统消息的 assistant 收尾（prefill 等罕见形态）保守自成一轮。
 func classifyBody(body []byte) (bool, string) {
 	if len(body) == 0 {
 		return true, ""
@@ -80,63 +114,129 @@ func classifyBody(body []byte) (bool, string) {
 	if len(list) == 0 {
 		return true, "" // 无消息数组（豆包 content_block 等私有形态）
 	}
+	// 跳过收尾的系统注入消息
+	lastIdx, sysSkipped := -1, false
+	for i := len(list) - 1; i >= 0; i-- {
+		var role struct {
+			Role string `json:"role"`
+		}
+		if json.Unmarshal(list[i], &role) != nil || role.Role != "system" {
+			lastIdx = i
+			break
+		}
+		sysSkipped = true
+	}
+	if lastIdx < 0 {
+		return true, "" // 整个列表只有系统消息：保守自成一轮
+	}
 	var last struct {
 		Role    string          `json:"role"`
 		Type    string          `json:"type"`
 		Content json.RawMessage `json:"content"`
 	}
-	if json.Unmarshal(list[len(list)-1], &last) != nil {
+	if json.Unmarshal(list[lastIdx], &last) != nil {
 		return true, ""
 	}
 	// Responses API：input 元素带 type，function_call_output 是工具结果回传
 	if last.Type == "function_call_output" || last.Type == "tool_result" {
-		return false, ""
+		return false, turnText(list, lastIdx)
 	}
 	switch last.Role {
 	case "tool", "function": // OpenAI chat 工具结果
-		return false, ""
+		return false, turnText(list, lastIdx)
 	case "user":
-		// content 为块数组（Anthropic 形态）：含 tool_result 即延续，
-		// 工具结果里混排的 text 多为 system-reminder 注入，不作新轮依据
-		var blocks []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+		if t := userText(last.Content); t != "" {
+			return true, t
 		}
-		if json.Unmarshal(last.Content, &blocks) == nil {
-			for _, b := range blocks {
-				if b.Type == "tool_result" {
-					return false, ""
-				}
-			}
-			for _, b := range blocks {
-				if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-					return true, cutText(b.Text, turnTextMax)
-				}
-			}
-			return true, ""
+		// 收尾 user 消息没有真实文本：纯工具结果 / 提醒环境注入 / 纯图片
+		return false, turnText(list, lastIdx)
+	case "assistant":
+		if sysSkipped {
+			// 系统通知等注入触发的续跑：用户没说话，归当前轮
+			return false, turnText(list, lastIdx)
 		}
-		// content 为字符串：纯用户文本
-		var s string
-		if json.Unmarshal(last.Content, &s) == nil {
-			return true, cutText(s, turnTextMax)
-		}
-		return true, ""
+		return true, "" // prefill 等异常收尾：保守自成一轮
 	default:
-		// assistant/system 收尾等异常形态：保守自成一轮
+		// 其余角色收尾等异常形态：保守自成一轮
 		return true, ""
 	}
 }
 
+// turnText 向前（含 upto 本身）找最近一条带真实用户发言的 user 消息，
+// 作为该请求所属轮的用户输入。中途加入抓取的会话（组内首条即延续）
+// 靠它把隐式轮的文本补出来。
+func turnText(list []json.RawMessage, upto int) string {
+	for i := upto; i >= 0; i-- {
+		var m struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(list[i], &m) != nil || m.Role != "user" {
+			continue
+		}
+		if t := userText(m.Content); t != "" {
+			return t
+		}
+	}
+	return ""
+}
+
+// userText 一条 user 消息的真实用户输入文本；没有（工具结果回传、提醒
+// 环境注入、纯图片）返回 ""。
+func userText(content json.RawMessage) string {
+	if len(content) == 0 {
+		return ""
+	}
+	// content 为字符串：纯用户文本
+	var s string
+	if json.Unmarshal(content, &s) == nil {
+		return cutText(s, turnTextMax)
+	}
+	// content 为块数组（Anthropic 形态）
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(content, &blocks) != nil {
+		return ""
+	}
+	for _, b := range blocks {
+		if b.Type == "tool_result" {
+			return "" // 工具结果回传不是用户发言（混排 text 多为注入标记）
+		}
+	}
+	// 从后往前取真实文本块：ZCode 会把摘要、system-reminder 等上下文块
+	// 排在真实输入前面，最后一个非注入块才是用户说的话
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if blocks[i].Type != "text" {
+			continue
+		}
+		if c := cutText(blocks[i].Text, turnTextMax); c != "" {
+			return c
+		}
+	}
+	return ""
+}
+
 const turnTextMax = 200
 
+// reAmbientBlock 成对标签包裹的注入段（<in-app-browser-context>…、
+// <task-notification>… 等非 <system-reminder>/<user_query> 的私有包装），
+// 整段剥掉而不是只剥标签token——否则包裹内的环境内容会被当成用户话。
+// RE2 不支持反向引用，不做标签名配对，展示文本可接受。
+var reAmbientBlock = regexp.MustCompile(`(?s)<[a-zA-Z][\w:-]*(\s[^>]*)?>.*?</[a-zA-Z][\w:-]*>`)
+
 // cutText 用户输入清洗与截断，cutTitle 的可调长度版：优先取 <user_query>
-// （WorkBuddy），剥掉 system-reminder 等包装标签后取剩余正文。
+// （WorkBuddy），剥掉 system-reminder 与成对标签包裹的注入段后取剩余正文
+// （ZCode 的环境注入后面跟着「## My request for ZCode:」+ 真实请求）。
 func cutText(s string, max int) string {
 	s = strings.ReplaceAll(s, "\r", "")
 	if m := reUserQuery.FindStringSubmatch(s); m != nil {
 		s = m[1]
 	} else {
 		s = reSysReminder.ReplaceAllString(s, "")
+		s = reAmbientBlock.ReplaceAllString(s, " ")
+		s = strings.ReplaceAll(s, "## My request for ZCode:", " ")
 		s = reAnyTag.ReplaceAllString(s, " ")
 	}
 	s = strings.Join(strings.Fields(s), " ")

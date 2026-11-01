@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,14 +22,19 @@ const DefaultAddr = "127.0.0.1:8787"
 
 // Run 执行 run 命令。
 //
-//	ai-trace run claude <args...>   # 按适配器注入，启动该 agent
+//	ai-trace run claude <args...>   # 按适配器注入，启动该 agent（无参数 = 打开交互 TUI）
 //	ai-trace run -- <cmd> <args...> # 通用模式：注入全部已知 base_url 变量
 //
 // 返回子进程退出码。
 func Run(adapterID string, args []string) int {
-	if len(args) == 0 {
-		fmt.Println("用法: ai-trace run <adapter> [args...]   # 如 ai-trace run claude")
+	// 通用模式必须给命令；适配器模式无参数合法（TUI 类 agent 直接开交互界面）
+	if adapterID == "--" && len(args) == 0 {
+		fmt.Println("用法: ai-trace run <adapter> [args...]   # 如 ai-trace run claude / zcode")
 		fmt.Println("      ai-trace run -- <cmd> [args...]    # 如 ai-trace run -- python my_agent.py")
+		return 2
+	}
+	if adapterID != "--" && adapterID != "" && adapter.ByID(adapterID) == nil {
+		fmt.Printf("未知 agent: %s（ai-trace adapters 查看内置列表）\n", adapterID)
 		return 2
 	}
 
@@ -54,11 +60,21 @@ func Run(adapterID string, args []string) int {
 			fmt.Printf("未知 agent: %s（ai-trace adapters 查看内置列表）\n", adapterID)
 			return 2
 		}
-		if len(a.Bins) == 0 {
+		switch {
+		case len(a.Launch) > 0:
+			// 自定义启动命令（如 Electron 壳跑内置 CLI），{{app}} 展开为应用路径
+			parts, ok := a.ExpandLaunch()
+			if !ok {
+				fmt.Printf("启动命令里的 {{app}} 无法解析：未找到应用（%s），请确认已安装\n", strings.Join(a.Apps, ", "))
+				return 2
+			}
+			cmdName, cmdArgs = parts[0], append(parts[1:], args...)
+		case len(a.Bins) > 0:
+			cmdName, cmdArgs = a.Bins[0], args
+		default:
 			fmt.Printf("%s 是通用模板，请用: ai-trace run -- <你的命令>\n", a.Name)
 			return 2
 		}
-		cmdName, cmdArgs = a.Bins[0], args
 		for k, v := range a.Env {
 			envMap[k] = v
 		}

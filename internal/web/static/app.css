@@ -131,7 +131,7 @@ body:not(.desktop) .web-only { display: none; }
 
 /* 视图标题行：面包屑返回 + 标题 + 说明，右缘可挂控件 */
 .view-h { display: flex; align-items: baseline; gap: 10px; min-height: 40px; margin: 2px 0 10px; flex: none; }
-.view-h h1 { font-size: var(--fs-xl); font-weight: 650; letter-spacing: -.01em; }
+.view-h h1 { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-xl); font-weight: 650; letter-spacing: -.01em; }
 .view-h .sub { font-size: var(--fs-md); color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .backlink { display: inline-flex; align-items: center; gap: 3px; height: 25px; padding: 0 9px; border-radius: 7px; font-size: var(--fs-md); color: var(--muted); text-decoration: none; transition: background .12s, color .12s; }
 .backlink:hover { background: var(--surface-2); color: var(--fg); }
@@ -405,6 +405,15 @@ body:not(.desktop) .web-only { display: none; }
 
 /* ===================== 15. 会话列表 ===================== */
 
+/* agent 图标：圆角色块 + 应用意象图形，色相由内联 --ic 提供（见 fmt.js agentIcon）。
+   Tab、列表行、详情标题三处共用；色块淡底用 color-mix，深浅主题都成立 */
+.agent-ic { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; border-radius: 5.5px; background: color-mix(in srgb, var(--ic) 13%, transparent); color: var(--ic); }
+.agent-ic svg { width: 12px; height: 12px; display: block; }
+.agent-ic i { font-style: normal; font-size: 10px; font-weight: 700; line-height: 1; }
+.agent-ic.lg { width: 22px; height: 22px; border-radius: 6.5px; }
+.agent-ic.lg svg { width: 14px; height: 14px; }
+.agent-ic.lg i { font-size: 12px; }
+
 .sess-num { display: flex; flex-direction: column; align-items: flex-end; flex: none; font-variant-numeric: tabular-nums; font-size: var(--fs-sm); color: var(--muted); }
 .sess-num b { font-size: var(--fs-md); color: var(--fg-2); font-weight: 550; }
 
@@ -558,3 +567,20 @@ details.tcall > summary:hover { background: var(--pill); border-radius: 8px; }
 details.turn.call-err { border-color: color-mix(in srgb, var(--red) 35%, transparent); box-shadow: inset 2px 0 0 var(--red); }
 .call-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line-2); }
 .call-foot .sub { overflow: hidden; text-overflow: ellipsis; }
+
+/* ===================== 轮次详情：调用链卡片（整卡可点进详情，箭头只展开） ===================== */
+details.turn.call > summary { gap: 10px; padding: 9px 14px; }
+details.turn.call > summary::before { display: none; } /* 原生箭头让位给 .t-caret */
+.c-idx { font-family: var(--code); min-width: 28px; text-align: center; }
+.c-model { flex: none; font-size: 12px; font-weight: 600; color: var(--fg); }
+.c-meta { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-caret { flex: none; width: 0; height: 0; border-left: 4.5px solid var(--faint); border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform .15s var(--ease); }
+details.turn[open] > summary .t-caret { transform: rotate(90deg); }
+details.turn.call > summary:hover .t-caret { border-left-color: var(--fg-2); }
+
+/* 回放「对话」分区：本次调用新增在上，此前历史折叠在下 */
+.chat-sec { margin: 10px 0 7px; }
+details.turn.hist-block { margin-top: 12px; border-style: dashed; }
+details.turn.hist-block > summary .t-chip { background: var(--pill); color: var(--fg-2); }
+details.turn.hist-block > summary:hover { background: var(--card); }
+details.turn.hist-block > .t-body { padding-top: 8px; }

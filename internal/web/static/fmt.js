@@ -156,8 +156,9 @@ AI.fmt = (() => {
       "gemini-cli": "Gemini CLI",
       cursor: "Cursor",
       opencode: "OpenCode",
-      zcode: "zcode",
+      zcode: "ZCode",
       workbuddy: "WorkBuddy",
+      pi: "Pi Agent",
       codebuddy: "CodeBuddy",
       aider: "Aider",
       cline: "Cline",
@@ -171,6 +172,62 @@ AI.fmt = (() => {
     };
     if (a === "unknown" || a === "undefined" || !a) return "未识别";
     return map[a] || a;
+  }
+
+  // agent 图标：圆角色块 + 应用意象图形（SVG 线稿或字符），色相按应用区分。
+  // 会话页的应用 Tab 和列表行共用。未收录的应用取显示名首字母，
+  // 颜色从固定色盘按 id 稳定散列——同一应用每次渲染颜色一致。
+  // 24 viewBox、stroke 2.1：缩到 12px 仍清晰（线宽等比 1.05px）。
+  const AGENT_GLYPHS = {
+    "claude-code": {
+      c: "#d97757", // Claude 日芒 · 陶土橙
+      svg: '<path d="M12 4.2v15.6M4.2 12h15.6M6.6 6.6l10.8 10.8M17.4 6.6 6.6 17.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>',
+    },
+    "claude-desktop": {
+      c: "#c2603f",
+      svg: '<path d="M12 4.2v15.6M4.2 12h15.6M6.6 6.6l10.8 10.8M17.4 6.6 6.6 17.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>',
+    },
+    codex: { // OpenAI 绿 · 终端提示符 >_
+      c: "#10a37f",
+      svg: '<path d="M6.5 7 11 11.5 6.5 16M12.5 17h5" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>',
+    },
+    zcode: { // Z
+      c: "#8b5cf6",
+      svg: '<path d="M6.8 7.2h10.4L6.8 16.8h10.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>',
+    },
+    workbuddy: { // 对话气泡
+      c: "#0aa0a8",
+      svg: '<path d="M12 4.6c4.4 0 8 2.8 8 6.3s-3.6 6.3-8 6.3c-1 0-1.98-.14-2.9-.4L5.4 18.9l1-3.1C4.9 14.6 4 12.9 4 10.9c0-3.5 3.6-6.3 8-6.3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
+    },
+    pi: { t: "π", c: "#b4530a" },
+    "gemini-cli": { // 四角星
+      c: "#4285f4",
+      svg: '<path d="M12 3c.5 5 4 8.5 9 9-5 .5-8.5 4-9 9-.5-5-4-8.5-9-9 5-.5 8.5-4 9-9z" fill="currentColor"/>',
+    },
+    cursor: { // 指针
+      c: "#64748b",
+      svg: '<path d="M6.3 4.4 18 10.9c.45.25.36.92-.15 1.02l-4.72.95 2.7 5.1a.55.55 0 0 1-.23.74l-1.98.94a.55.55 0 0 1-.73-.24l-2.7-5.1-3.55 3.55z" fill="currentColor"/>',
+    },
+    doubao: { t: "豆", c: "#3b82f6" },
+    quark: { t: "夸", c: "#5b5bd6" },
+    unknown: { t: "?", c: "#7c8090" },
+  };
+  const ICON_HUES = ["#0e9bd8", "#8b5cf6", "#0f9d58", "#e0970f", "#d63434", "#2e6bf5", "#0aa0a8", "#b4530a"];
+
+  function agentIcon(a, lg) {
+    const g = AGENT_GLYPHS[a] || (!a || a === "undefined" ? AGENT_GLYPHS.unknown : null);
+    let inner, c;
+    if (g) {
+      inner = g.svg ? `<svg viewBox="0 0 24 24" aria-hidden="true">${g.svg}</svg>` : `<i>${g.t}</i>`;
+      c = g.c;
+    } else {
+      // 兜底：显示名首字母 + 按 id 散列取色
+      let h = 0;
+      for (const ch of String(a)) h = (h * 31 + ch.codePointAt(0)) | 0;
+      c = ICON_HUES[Math.abs(h) % ICON_HUES.length];
+      inner = `<i>${esc([...agentName(a)][0].toUpperCase())}</i>`;
+    }
+    return `<span class="agent-ic${lg ? " lg" : ""}" style="--ic:${c}" aria-hidden="true">${inner}</span>`;
   }
 
   // 今天（本地时区）→ YYYY-MM-DD
@@ -189,5 +246,5 @@ AI.fmt = (() => {
     try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; }
   }
 
-  return { esc, num, tok, dur, money, time, datetime, ago, bytes, statusBadge, toolList, pct, delta, spark, stopReason, agentName, today, prettyJSON };
+  return { esc, num, tok, dur, money, time, datetime, ago, bytes, statusBadge, toolList, pct, delta, spark, stopReason, agentName, agentIcon, today, prettyJSON };
 })();

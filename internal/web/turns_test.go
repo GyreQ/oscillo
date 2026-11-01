@@ -56,11 +56,11 @@ func TestClassifyBody(t *testing.T) {
 		text   string
 	}{
 		{"anthropic 纯文本收尾 → 新轮", userText, true, "帮我看看这个报错"},
-		{"anthropic tool_result 收尾 → 延续", toolResult, false, ""},
-		{"anthropic tool_result 混 reminder 文本 → 延续", mixed, false, ""},
-		{"openai tool role 收尾 → 延续", openaiTool, false, ""},
+		{"anthropic tool_result 收尾 → 延续（回溯真实输入）", toolResult, false, "前面的话"},
+		{"anthropic tool_result 混 reminder 文本 → 延续", mixed, false, "前面的话"},
+		{"openai tool role 收尾 → 延续（回溯真实输入）", openaiTool, false, "hi"},
 		{"openai user 文本收尾 → 新轮", openaiUser, true, "再来一次"},
-		{"responses function_call_output 收尾 → 延续", responsesTool, false, ""},
+		{"responses function_call_output 收尾 → 延续（回溯真实输入）", responsesTool, false, "hi"},
 		{"responses message 收尾 → 新轮", responsesUser, true, "新问题"},
 		{"豆包私有形态（无 messages）→ 兜底自成新轮", []byte(`{"content_block":[]}`), true, ""},
 		{"垃圾体 → 兜底自成新轮", []byte(`not-json`), true, ""},
@@ -96,7 +96,156 @@ func endsWith(s, suf string) bool {
 	return len(s) >= len(suf) && s[len(s)-len(suf):] == suf
 }
 
-// ---- buildTurns / TurnsForDay：切轮、汇总与分组 ----
+// msgsBody 构造任意消息列表的请求体。
+func msgsBody(msgs ...map[string]any) []byte {
+	b, _ := json.Marshal(map[string]any{"messages": msgs})
+	return b
+}
+
+func sysMsg(content string) map[string]any {
+	return map[string]any{"role": "system", "content": content}
+}
+
+// TestClassifyBodyZCode ZCode 桌面端（mid-conversation-system beta）的真实
+// 请求形态：系统注入收尾、环境注入 user 消息、多块真实输入、后台通知触发。
+// 回归背景：收尾 system 注入曾被当成独立新轮，列表里出现大量「无用户文本」。
+func TestClassifyBodyZCode(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   []byte
+		starts bool
+		text   string
+	}{
+		{
+			// 新会话首请求：user(reminder 块, 你好) + 收尾 system(#Environment)
+			name: "系统注入收尾，前一条是真实输入 → 新轮取最后真实块",
+			body: msgsBody(
+				map[string]any{"role": "user", "content": []map[string]any{
+					{"type": "text", "text": "<system-reminder># gitStatus\nmain</system-reminder>"},
+					{"type": "text", "text": "你好"},
+				}},
+				sysMsg("# Environment\nYou have been invoked in the following environment"),
+			),
+			starts: true, text: "你好",
+		},
+		{
+			// ReAct 中途的 TodoWrite 提醒：收尾 system，前一条 tool_result
+			name: "系统注入收尾，前面是工具结果 → 延续并回溯真实输入",
+			body: msgsBody(
+				map[string]any{"role": "user", "content": "修一下构建"},
+				map[string]any{"role": "assistant", "content": "好"},
+				map[string]any{"role": "user", "content": []map[string]any{
+					{"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+				}},
+				sysMsg("The TodoWrite tool hasn't been used recently."),
+			),
+			starts: false, text: "修一下构建",
+		},
+		{
+			// 纯环境注入的 user 消息（整段包裹、无真实请求）
+			name: "整段标签包裹的注入 user 消息 → 延续",
+			body: msgsBody(
+				map[string]any{"role": "user", "content": "前面的话"},
+				map[string]any{"role": "assistant", "content": "答"},
+				map[string]any{"role": "user", "content": []map[string]any{
+					{"type": "text", "text": "<in-app-browser-context source=\"ambient-ui-state\">\nambient state\n</in-app-browser-context>"},
+				}},
+			),
+			starts: false, text: "前面的话",
+		},
+		{
+			// 环境注入后面跟着真实请求（同一文本块）
+			name: "注入块后跟真实请求 → 新轮剥掉注入",
+			body: msgsBody(
+				map[string]any{"role": "user", "content": []map[string]any{
+					{"type": "text", "text": "<in-app-browser-context source=\"ambient-ui-state\">\nambient state\n</in-app-browser-context>\n\n## My request for ZCode:\n没有独立式吗？独立式我能看看吗"},
+				}},
+			),
+			starts: true, text: "没有独立式吗？独立式我能看看吗",
+		},
+		{
+			// 续会话首请求：摘要 + reminder + 真实输入三块，收尾 system 工具回显
+			name: "多块上下文 + 真实输入 + 收尾回显 → 新轮取真实输入",
+			body: msgsBody(
+				map[string]any{"role": "user", "content": []map[string]any{
+					{"type": "text", "text": "This session is being continued from a previous conversation."},
+					{"type": "text", "text": "<system-reminder># gitStatus\nmain</system-reminder>"},
+					{"type": "text", "text": "抓取zcode的时候会显示无用户文本，需要修复"},
+				}},
+				sysMsg("Called the Read tool with the following input: {}"),
+			),
+			starts: true, text: "抓取zcode的时候会显示无用户文本，需要修复",
+		},
+		{
+			// 后台任务通知：系统注入触发，前面只有旧的问答
+			name: "通知触发、跳过 system 后是 assistant → 延续",
+			body: msgsBody(
+				map[string]any{"role": "user", "content": "第一问"},
+				map[string]any{"role": "assistant", "content": "答"},
+				sysMsg("[SYSTEM NOTIFICATION - NOT USER INPUT] background task done"),
+			),
+			starts: false, text: "第一问",
+		},
+		{
+			// 子代理 kickoff：任务文本 + 收尾 system(#Environment)
+			name: "子代理 kickoff（任务 + 系统环境） → 新轮取任务文本",
+			body: msgsBody(
+				map[string]any{"role": "user", "content": "请只回复两个字：好的"},
+				sysMsg("# Environment\nYou have been invoked"),
+			),
+			starts: true, text: "请只回复两个字：好的",
+		},
+		{
+			// 纯图片收尾（无文本）：不开空轮
+			name: "纯图片收尾 → 延续",
+			body: msgsBody(
+				map[string]any{"role": "user", "content": "第一问"},
+				map[string]any{"role": "user", "content": []map[string]any{
+					{"type": "image", "source": map[string]any{"type": "base64"}},
+				}},
+			),
+			starts: false, text: "第一问",
+		},
+	}
+	for _, c := range cases {
+		starts, text := classifyBody(c.body)
+		if starts != c.starts || text != c.text {
+			t.Errorf("%s: classifyBody = (%v, %q), want (%v, %q)",
+				c.name, starts, text, c.starts, c.text)
+		}
+	}
+}
+
+// TestClassifyRecordCompact ZCode 压缩请求：请求体长得像用户新输入
+// （CRITICAL: Respond with TEXT ONLY...），但 header 标明 compact → 延续。
+// 注意 bodyClassCache 按记录 ID 全局缓存，两段用例须用不同 ID。
+func TestClassifyRecordCompact(t *testing.T) {
+	critical := map[string]any{"role": "user", "content": "CRITICAL: Respond with TEXT ONLY."}
+	recsOf := func(id1, id2 string) []store.Record {
+		return []store.Record{mkRec(id1, at(0), "s1", ""), mkRec(id2, at(5), "s1", "")}
+	}
+	bodiesOf := func(id1, id2 string, compact bool) map[string]store.FullBody {
+		b2 := msgBody(critical)
+		if compact {
+			b2.RequestHeaders = map[string]string{"X-Zcode-Query-Source": "compact"}
+		}
+		return map[string]store.FullBody{
+			id1: msgBody(map[string]any{"role": "user", "content": "第一问"}),
+			id2: b2,
+		}
+	}
+	// 带 compact header：并入当前轮，不另开一轮
+	st := turnStore(t, recsOf("zc1", "zc2"), bodiesOf("zc1", "zc2", true))
+	turns := TurnsForDay(st, st.Days()[0])
+	if len(turns) != 1 || turns[0].Calls != 2 || turns[0].Text != "第一问" {
+		t.Fatalf("compact 请求应并入当前轮: %+v", turns)
+	}
+	// 同形体无 header：仍开新轮
+	st2 := turnStore(t, recsOf("zc3", "zc4"), bodiesOf("zc3", "zc4", false))
+	if turns := TurnsForDay(st2, st2.Days()[0]); len(turns) != 2 {
+		t.Fatalf("无 compact header 应开新轮: %+v", turns)
+	}
+}
 
 // turnStore 造一个临时账本：recs 依次 Append（body 全量由 bodies 给出，
 // 可带 RequestBody/Result）。注意 Append 以写入日决定账本文件，测试记录
